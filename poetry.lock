@@ -944,7 +944,6 @@ tqdm = "^4.66.2"
 type = "git"
 url = "https://github.com/yolandalalala/gnn-xai-common.git"
 reference = "main"
-resolved_reference = "9dfcb3b4aa1adac193d05d317b7404f2390389ed"
 
 [[package]]
 name = "h11"
