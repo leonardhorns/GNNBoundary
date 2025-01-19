@@ -151,12 +151,15 @@ class BaseGraphDataset(pyg.data.InMemoryDataset, ABC):
         return np.mean(losses)
 
     @torch.no_grad()
-    def model_evaluate(self, model, batch_size=32):
+    def model_evaluate(self, model, batch_size=32, use_test_only=False):
         acc = Accuracy(task="multiclass", num_classes=len(self.GRAPH_CLS))
         cm = ConfusionMatrix(task='multiclass', num_classes=len(self.GRAPH_CLS))
         f1 = F1Score(task="multiclass", num_classes=len(self.GRAPH_CLS), average=None)
         model.eval()
-        for batch in self.loader(batch_size=batch_size, shuffle=False):
+
+        dataset = self.train_test_split()[1] if use_test_only else self
+
+        for batch in dataset.loader(batch_size=batch_size, shuffle=False):
             acc(model(batch)['logits'], batch.y)
             cm(model(batch)['logits'], batch.y)
             f1(model(batch)['logits'], batch.y)

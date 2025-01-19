@@ -1,12 +1,13 @@
 import random
 
 import networkx as nx
+import os
 
-from gnn_xai_common.datasets import RomeDataset
-from gnn_xai_common.datasets.utils import default_ax
+from ..gnn_xai_common.datasets import BaseGraphDataset
+from ..gnn_xai_common.datasets.utils import default_ax
 
 
-class MotifDataset(RomeDataset):
+class MotifDataset(BaseGraphDataset):
 
     NODE_CLS = {
         0: 'red',
@@ -120,6 +121,10 @@ class MotifDataset(RomeDataset):
                                    ])
         nx.draw_networkx_edges(G.subgraph(G.nodes), pos, ax=ax, width=6)
         nx.draw_networkx_edges(G.subgraph(motif_nodes), pos, ax=ax, width=(12 if mark_motif else 6))
+
+    @property
+    def raw_file_names(self):
+        return [""]
 
     def draw_gt(self, cls, ax=None):
         self.draw(self.get_motif(cls).G, ax=ax, mark_motif=False)
