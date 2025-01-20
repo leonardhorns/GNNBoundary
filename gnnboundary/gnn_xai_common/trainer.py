@@ -21,22 +21,21 @@ class Trainer:
                  sampler,
                  discriminator,
                  criterion,
-                 scheduler,
-                 optimizer,
+                 optim_factory,
                  dataset,
                  budget_penalty=None,):
         self.sampler = sampler
         self.discriminator = discriminator
         self.criterion = criterion
         self.budget_penalty = budget_penalty
-        self.scheduler = scheduler
-        self.optimizer = optimizer if isinstance(optimizer, list) else [optimizer]
+        self.optim_factory = optim_factory
         self.dataset = dataset
-        self.iteration = 0
+        self.init()
 
     def init(self):
         self.sampler.init()
         self.iteration = 0
+        self.optimizer, self.scheduler = self.optim_factory(self.sampler)
 
     def train(self, iterations,
               show_progress=True,
@@ -52,6 +51,8 @@ class Trainer:
         self.discriminator.eval()
         self.sampler.train()
         budget_penalty_weight = w_budget_init
+        
+        budget_penalty_weights = []
         for _ in (bar := tqdm(
             range(int(iterations)),
             initial=self.iteration,
@@ -74,6 +75,7 @@ class Trainer:
                 budget_penalty_weight *= w_budget_inc
             else:
                 budget_penalty_weight = max(w_budget_init, budget_penalty_weight * w_budget_dec)
+            budget_penalty_weights.append(budget_penalty_weight)
 
             loss = self.criterion(cont_out | self.sampler.to_dict())
             if self.budget_penalty:
@@ -94,23 +96,34 @@ class Trainer:
             # print(f"{iteration=}, loss={loss.item():.2f}, {size=}, scores={score_dict}")
             self.iteration += 1
         else:
-            return False
-        return True
+            return False, {'bpw': budget_penalty_weights}
+        return True, {'bpw': budget_penalty_weights}
 
     @torch.no_grad()
     def predict(self, G):
         batch = pyg.data.Batch.from_data_list([self.dataset.convert(G, generate_label=True)])
         return self.discriminator(batch)
+    
+    @torch.no_grad()
+    def predict_batch(self, Gs):
+        batch = pyg.data.Batch.from_data_list([self.dataset.convert(G, generate_label=True) for G in Gs])
+        return self.discriminator(batch)
 
     @torch.no_grad()
     def quantatitive(self, sample_size=1000, sample_fn=None):
         sample_fn = sample_fn or (lambda: self.evaluate(bernoulli=True))
-        p = []
-        for i in range(1000):
-            p.append(self.predict(sample_fn())["probs"][0].numpy().astype(float))
+        # p = []
+        # for i in range(1000):
+        #     p.append(self.predict(sample_fn())["probs"][0].numpy().astype(float))
+        # return dict(label=list(self.dataset.GRAPH_CLS.values()),
+        #             mean=np.mean(p, axis=0),
+        #             std=np.std(p, axis=0))
+        graphs = [sample_fn() for _ in range(sample_size)]
+        probs = self.predict_batch(graphs)["probs"]
         return dict(label=list(self.dataset.GRAPH_CLS.values()),
-                    mean=np.mean(p, axis=0),
-                    std=np.std(p, axis=0))
+                    mean=probs.mean(dim=0),
+                    std=probs.std(dim=0))
+        
 
     @torch.no_grad()
     def quantatitive_baseline(self, **kwargs):
@@ -168,15 +181,22 @@ class Trainer:
         os.makedirs(path, exist_ok=True)
         self.sampler.save(f"{path}/{name}.pt")
 
-    def batch_generate(self, cls_idx, total, epochs, show_progress=True):
+    def batch_generate(self, cls_idx, total, num_boundary_samples=0,  **train_args):
         pbar = tqdm(total=total)
         count = 0
+        scores = []
+        bpws = []
         while count < total:
             self.init()
-            if self.train(epochs, show_progress=show_progress):
+            converged, metadata = self.train(**train_args)
+            bpws.append((metadata['bpw'], converged))
+            if converged:
                 self.save_sampler(cls_idx)
+                if num_boundary_samples > 0:
+                    scores.append(self.quantatitive(sample_size=num_boundary_samples))
                 count += 1
                 pbar.update(1)
+        return scores, bpws
 
     def get_training_success_rate(self, total, epochs, show_progress=False):
         iters = []

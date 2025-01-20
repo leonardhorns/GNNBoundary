@@ -16,6 +16,6 @@ class DynamicBalancingBoundaryCriterion(nn.Module):
         mask = torch.zeros_like(logits).bool()
         mask[:, self.classes] = True
         score = logits * probs ** 2
-        notmax = probs <= probs.max(dim=1, keepdim=True).values
+        notmax = probs < probs.max(dim=1, keepdim=True).values
         score[mask] = logits[mask] * (1 - probs[mask]) ** 2 * notmax[mask]
         return (self.beta * score[~mask].sum(dim=-1) - self.alpha * score[mask].sum(dim=-1)).mean()
