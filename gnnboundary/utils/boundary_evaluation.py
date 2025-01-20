@@ -89,3 +89,28 @@ def boundary_thickness(graph_embedding,
         boundary_thickness = np.where(gamma > y_new_batch[c1, :] - y_new_batch[c2, :])
 
         return dist.item() * np.sum(boundary_thickness) / num_points
+
+
+def boundary_complexity(boundary_graph_embedding):
+    
+    """
+    Args:
+        boundary_graph_embedding (torch.Tensor): A tensor of shape (embedding_dimension, num_boundary_graphs)
+                                                 containing the embeddings of the boundary graphs
+                                                 TODO the paper mentions taking phi_l-1, which suggests that the final pooling layer is skipped. Why exactly?
+
+    Returns:
+        complexity (float): The complexity of the decision boundary, a value between 0 and 1.
+    """
+    covariance_matrix = torch.cov(boundary_graph_embedding.T)
+    eigenvalues, _ = torch.linalg.eigh(covariance_matrix)
+
+    assert torch.all(eigenvalues > 0) # Numerical imprecision might cause negative eigenvalues
+    normalised_eigenvalues = eigenvalues / eigenvalues.sum()
+
+    numerator = -torch.sum(normalised_eigenvalues * torch.log(normalised_eigenvalues))
+
+    embedding_dimension = boundary_graph_embedding.shape[1]
+    complexity = (numerator / torch.log(torch.tensor(embedding_dimension, dtype=torch.float32))).item()
+
+    return complexity
