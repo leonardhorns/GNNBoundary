@@ -214,24 +214,32 @@ class GraphSampler(nn.Module):
         Sample a graph with i.i.d. Concrete distributed edges
         :return: a batch containing a single graph
         """
-        X = self.sample_X(seed=seed, expected=expected)
-        A = self.sample_A(seed=seed, expected=expected)
-        E = self.sample_E(seed=seed, expected=expected)
-        cont_data, disc_data = None, None
+        cont_graphs, disc_graphs = [], []
+        for _ in range(k):
+            X = self.sample_X(seed=seed, expected=expected)
+            A = self.sample_A(seed=seed, expected=expected)
+            E = self.sample_E(seed=seed, expected=expected)
+            
+            if mode in ['continuous', 'both']:
+                cont_graphs.append(pyg.data.Data(
+                    x=X,
+                    edge_index=self.edge_index,
+                    edge_weight=A,
+                    edge_attr=E,
+                ))
+            if mode in ['discrete', 'both']:
+                disc_graphs.append(pyg.data.Data(
+                    x=torch.eye(self.k)[X.argmax(dim=-1)].float(),
+                    edge_index=self.edge_index,
+                    edge_weight=(A > 0.5).float(),
+                    edge_attr=torch.eye(self.l)[E.argmax(dim=-1)].float() if self.eta is not None else E,
+                ))
+                
         if mode in ['continuous', 'both']:
-            cont_data = pyg.data.Batch.from_data_list([pyg.data.Data(
-                x=X,
-                edge_index=self.edge_index,
-                edge_weight=A,
-                edge_attr=E,
-            ) for _ in range(k)])
+            cont_data = pyg.data.Batch.from_data_list(cont_graphs)
         if mode in ['discrete', 'both']:
-            disc_data = pyg.data.Batch.from_data_list([pyg.data.Data(
-                x=torch.eye(self.k)[X.argmax(dim=-1)].float(),
-                edge_index=self.edge_index,
-                edge_weight=(A > 0.5).float(),
-                edge_attr=torch.eye(self.l)[E.argmax(dim=-1)].float() if self.eta is not None else E,
-            ) for _ in range(k)])
+            disc_data = pyg.data.Batch.from_data_list(disc_graphs)
+        
         if mode == 'both':
             return cont_data, disc_data
         elif mode == 'continuous':
