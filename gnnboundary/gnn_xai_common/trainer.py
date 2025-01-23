@@ -52,7 +52,9 @@ class Trainer:
         self.sampler.train()
         budget_penalty_weight = w_budget_init
         
-        budget_penalty_weights = []
+        logs = {
+            'cls_probs': [],
+        }
         for _ in (bar := tqdm(
             range(int(iterations)),
             initial=self.iteration,
@@ -61,21 +63,24 @@ class Trainer:
         )):
             for opt in self.optimizer:
                 opt.zero_grad()
-            cont_data = self.sampler(k=k_samples, mode='continuous')
-            disc_data = self.sampler(k=1, mode='discrete', expected=True)
+
+            cont_data, disc_data = self.sampler(k=k_samples, mode='both')
             # TODO: potential bug
             cont_out = self.discriminator(cont_data, edge_weight=cont_data.edge_weight)
             disc_out = self.discriminator(disc_data, edge_weight=disc_data.edge_weight)
+            expected_probs = disc_out["probs"].mean(dim=0)
+            logs['cls_probs'].append(expected_probs.detach())
+
             if target_probs and all([
-                min_p <= disc_out["probs"][0, classes].item() <= max_p
+                min_p <= expected_probs[classes].item() <= max_p
                 for classes, (min_p, max_p) in target_probs.items()
             ]):
                 if target_size and self.sampler.expected_m <= target_size:
+                    logs['final_probs'] = expected_probs.detach()
                     break
                 budget_penalty_weight *= w_budget_inc
             else:
                 budget_penalty_weight = max(w_budget_init, budget_penalty_weight * w_budget_dec)
-            budget_penalty_weights.append(budget_penalty_weight)
 
             loss = self.criterion(cont_out | self.sampler.to_dict())
             if self.budget_penalty:
@@ -96,8 +101,8 @@ class Trainer:
             # print(f"{iteration=}, loss={loss.item():.2f}, {size=}, scores={score_dict}")
             self.iteration += 1
         else:
-            return False, {'bpw': budget_penalty_weights}
-        return True, {'bpw': budget_penalty_weights}
+            return False, logs
+        return True, logs
 
     @torch.no_grad()
     def predict(self, G):
@@ -110,16 +115,15 @@ class Trainer:
         return self.discriminator(batch)
 
     @torch.no_grad()
-    def quantatitive(self, sample_size=1000, sample_fn=None):
-        sample_fn = sample_fn or (lambda: self.evaluate(bernoulli=True))
-        # p = []
-        # for i in range(1000):
-        #     p.append(self.predict(sample_fn())["probs"][0].numpy().astype(float))
-        # return dict(label=list(self.dataset.GRAPH_CLS.values()),
-        #             mean=np.mean(p, axis=0),
-        #             std=np.std(p, axis=0))
-        graphs = [sample_fn() for _ in range(sample_size)]
-        probs = self.predict_batch(graphs)["probs"]
+    def quantatitive(self, sample_size=1000, sample_fn=None, use_train_sampling=False):
+        if use_train_sampling:
+            self.sampler.eval()
+            samples = self.sampler(k=sample_size, mode='discrete')
+            probs = self.discriminator(samples, edge_weight=samples.edge_weight)["probs"]
+        else:
+            sample_fn = sample_fn or (lambda: self.evaluate(bernoulli=True))
+            graphs = [sample_fn() for _ in range(sample_size)]
+            probs = self.predict_batch(graphs)["probs"]
         return dict(label=list(self.dataset.GRAPH_CLS.values()),
                     mean=probs.mean(dim=0),
                     std=probs.std(dim=0))
@@ -181,22 +185,43 @@ class Trainer:
         os.makedirs(path, exist_ok=True)
         self.sampler.save(f"{path}/{name}.pt")
 
-    def batch_generate(self, cls_idx, total, num_boundary_samples=0,  **train_args):
+    def batch_generate(self, cls_idx, total, num_boundary_samples=0, show_runs=False, **train_args):
         pbar = tqdm(total=total)
         count = 0
-        scores = []
-        bpws = []
+        logs = []
         while count < total:
             self.init()
-            converged, metadata = self.train(**train_args)
-            bpws.append((metadata['bpw'], converged))
+            converged, run_logs = self.train(**train_args)
+            run_logs["converged"] = converged
+
+            if show_runs:
+                cls_probs = torch.stack(run_logs['cls_probs']).T
+
+                for cls in cls_idx:
+                    plt.plot(cls_probs[cls], label=f"cls {cls}")
+                plt.legend()
+                plt.ylim(0, 1)
+                plt.savefig(f"plots/quantitative/{count}.png", bbox_inches="tight", dpi=100)
+                plt.show()
+            del run_logs['cls_probs']
+
             if converged:
                 self.save_sampler(cls_idx)
+
                 if num_boundary_samples > 0:
-                    scores.append(self.quantatitive(sample_size=num_boundary_samples))
-                count += 1
-                pbar.update(1)
-        return scores, bpws
+                    idx = list(cls_idx)
+                    run_logs["train_scores"] = self.quantatitive(sample_size=num_boundary_samples, use_train_sampling=True)
+                    run_logs["eval_scores"] = self.quantatitive(sample_size=num_boundary_samples)
+
+                    if show_runs:
+                        print("final", run_logs["final_probs"][idx].tolist())
+                        print("train", run_logs["train_scores"]["mean"][idx].tolist())
+                        print("eval", run_logs["eval_scores"]["mean"][idx].tolist())
+
+            logs.append(run_logs)
+            count += 1
+            pbar.update(1)
+        return logs
 
     def get_training_success_rate(self, total, epochs, show_progress=False):
         iters = []
