@@ -86,9 +86,7 @@ def boundary_thickness(graph_embedding,
 
         y_new_batch = model_scoring_function(embeds=new_batch)['probs'].T
 
-        #assuming that y_new_batch is off dimension (num_classes * num_samples)
-
-        thickness.append(dist.item() * len(np.where(gamma > y_new_batch[c1, :] - y_new_batch[c2, :])[0]) / num_points)
+        thickness.append(dist.item() * (gamma > y_new_batch[c1, :] - y_new_batch[c2, :]).sum().item() / num_points)
 
     return np.mean(thickness)
 
@@ -132,10 +130,7 @@ def get_model_boundary_margin(trainer,
                               from_best_boundary_graph=False):
 
 
-    boundary_graphs = []
-
-    for _ in range(num_samples):
-        boundary_graphs.append(trainer.evaluate(bernoulli=True))
+    boundary_graphs = sample_valid_boundary_graphs(trainer, num_samples, original_class_idx, adjacent_class_idx)
 
     if from_best_boundary_graph:
         boundary_graphs = get_best_boundary_graph(trainer,
@@ -156,10 +151,8 @@ def get_model_boundary_thickness(trainer,
                                  adjacent_class_idx,
                                  num_samples,
                                  from_best_boundary_graph=False):
-    boundary_graphs = []
 
-    for _ in range(num_samples):
-        boundary_graphs.append(trainer.evaluate(bernoulli=True))
+    boundary_graphs = sample_valid_boundary_graphs(trainer, num_samples, original_class_idx, adjacent_class_idx)
 
     if from_best_boundary_graph:
         boundary_graphs = get_best_boundary_graph(trainer,
@@ -192,14 +185,36 @@ def get_best_boundary_graph(trainer,
 
     return boundary_predicted_batch[key][best_graph_idx, :]
 
+
 def get_model_complexity(trainer,
+                         original_class_idx,
+                         adjacent_class_idx,
                          num_samples):
 
-    boundary_graphs = []
 
-    for _ in range(num_samples):
-        boundary_graphs.append(trainer.evaluate(bernoulli=True))
-
+    boundary_graphs = sample_valid_boundary_graphs(trainer, num_samples, original_class_idx, adjacent_class_idx)
     boundary_graphs = trainer.predict_batch(boundary_graphs)['embeds_last'].T
 
     return boundary_complexity(boundary_graphs)
+
+
+def sample_valid_boundary_graphs(trainer,
+                                 num_samples,
+                                 original_class_idx,
+                                 adjacent_class_idx):
+
+    boundary_graphs = []
+    cur_samples = 0
+
+    p_min = 0.45
+    p_max = 0.55
+
+    while cur_samples < num_samples:
+        cur_boundary_graph = trainer.evaluate(bernoulli=True)
+        probs = trainer.predict(cur_boundary_graph)['probs']
+
+        if p_min <= probs[0][original_class_idx] <= p_max and p_min <= probs[0][adjacent_class_idx] <= p_max:
+            boundary_graphs.append(cur_boundary_graph)
+            cur_samples += 1
+
+    return boundary_graphs
