@@ -265,12 +265,14 @@ class GraphSampler(nn.Module):
 
         # add node features
         if self.xi is not None:
-            node_cls = self.xi.argmax(dim=1)
+            # node_cls = self.xi.argmax(dim=1)
+            node_cls = torch.multinomial(self.p, 1).squeeze()
             nx.set_node_attributes(G, {v: {'label': c.item()} for v, c in enumerate(node_cls)})
 
         # add edge features
         if self.eta is not None:
-            edge_cls = self.eta.argmax(dim=1)
+            # edge_cls = self.eta.argmax(dim=1)
+            edge_cls = torch.multinomial(self.q, 1).squeeze()
             nx.set_edge_attributes(G, {(u, v): {'label': c.item()} for (u, v), c in zip(self.edges, edge_cls)})
 
         return G
