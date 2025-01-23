@@ -164,8 +164,6 @@ class GraphSampler(nn.Module):
         else:
             if seed is not None:
                 torch.manual_seed(seed)
-            else:
-                torch.seed()
             return torch.rand_like(target)
 
     def sample_A(self, seed=None, expected=False) -> torch.Tensor:
