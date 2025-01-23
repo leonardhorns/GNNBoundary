@@ -17,9 +17,6 @@ def boundary_margin(graph_embedding,
     # shuffle embeddings around to generate random ordering
     num_samples = min(graph_embedding.shape[1], boundary_graph_embedding.shape[1])
 
-    graph_embedding = graph_embedding[:, torch.randperm(graph_embedding.shape[1])]
-    boundary_graph_embedding = boundary_graph_embedding[:, torch.randperm(boundary_graph_embedding.shape[1])]
-
     margin = float('inf')
 
     #iterate through pairs of graph embeddings
@@ -40,7 +37,8 @@ def boundary_margin(graph_embedding,
 def boundary_thickness(graph_embedding,
                        boundary_graph_embedding,
                        model_scoring_function,
-                       class_pair_idx,
+                       c1,
+                       c2,
                        gamma=0.75,
                        num_points=50):
 
@@ -63,11 +61,16 @@ def boundary_thickness(graph_embedding,
 
     graph_embedding = graph_embedding[:, torch.randperm(graph_embedding.shape[1])]
     boundary_graph_embedding = boundary_graph_embedding[:, torch.randperm(boundary_graph_embedding.shape[1])]
+    thickness = []
 
     for idx in range(num_samples):
 
         g1 = graph_embedding[:, idx]
-        g2 = boundary_graph_embedding[:, idx]
+
+        if boundary_graph_embedding.shape[1] > 1:
+            g2 = boundary_graph_embedding[:, idx]
+        else:
+            g2 = boundary_graph_embedding[:, 0]
 
         ## We use l2 norm to measure distance
         dist = torch.norm(g1 - g2, p=2)
@@ -81,14 +84,13 @@ def boundary_thickness(graph_embedding,
             new_batch.append(g1 * lmbd + g2 * (1 - lmbd))
         new_batch = torch.stack(new_batch)
 
-        y_new_batch = model_scoring_function(new_batch)
-
-        c1, c2 = class_pair_idx
+        y_new_batch = model_scoring_function(embeds=new_batch)['probs'].T
 
         #assuming that y_new_batch is off dimension (num_classes * num_samples)
-        boundary_thickness = np.where(gamma > y_new_batch[c1, :] - y_new_batch[c2, :])
 
-        return dist.item() * np.sum(boundary_thickness) / num_points
+        thickness.append(dist.item() * len(np.where(gamma > y_new_batch[c1, :] - y_new_batch[c2, :])[0]) / num_points)
+
+    return np.mean(thickness)
 
 
 def boundary_complexity(boundary_graph_embedding):
@@ -97,20 +99,107 @@ def boundary_complexity(boundary_graph_embedding):
     Args:
         boundary_graph_embedding (torch.Tensor): A tensor of shape (embedding_dimension, num_boundary_graphs)
                                                  containing the embeddings of the boundary graphs
-                                                 TODO the paper mentions taking phi_l-1, which suggests that the final pooling layer is skipped. Why exactly?
 
     Returns:
         complexity (float): The complexity of the decision boundary, a value between 0 and 1.
     """
-    covariance_matrix = torch.cov(boundary_graph_embedding.T)
-    eigenvalues, _ = torch.linalg.eigh(covariance_matrix)
 
-    assert torch.all(eigenvalues > 0) # Numerical imprecision might cause negative eigenvalues
+    #increase floating point precision
+    boundary_graph_embedding = boundary_graph_embedding.to(dtype=torch.float64)
+
+    #eigenvalue obtained from PCA decomposition according to paper
+    covariance_matrix = torch.cov(boundary_graph_embedding)
+    eigenvalues, _ = torch.linalg.eig(covariance_matrix)
+
+    #get only real values
+    eigenvalues = eigenvalues.real
     normalised_eigenvalues = eigenvalues / eigenvalues.sum()
 
-    numerator = -torch.sum(normalised_eigenvalues * torch.log(normalised_eigenvalues))
+    #shannon entropy: sum(p_i * log(p_i))
+    normalised_eigenvalues[normalised_eigenvalues < 0] = 0 #eigenvalues should not be less than 0, possibly due to numerical imprecision
+    shannon_entropy = -torch.sum((normalised_eigenvalues * torch.log(normalised_eigenvalues)).nan_to_num()) #nan_to_num(), because in torch inf * 0 = nan
 
-    embedding_dimension = boundary_graph_embedding.shape[1]
-    complexity = (numerator / torch.log(torch.tensor(embedding_dimension, dtype=torch.float32))).item()
+    #complexity is shannon_entropy / log(embedding_dimension)
+    return  shannon_entropy / np.log(boundary_graph_embedding.shape[0])
 
-    return complexity
+
+def get_model_boundary_margin(trainer,
+                              dataset_list_pred,
+                              model,
+                              original_class_idx,
+                              adjacent_class_idx,
+                              num_samples,
+                              from_best_boundary_graph=False):
+
+
+    boundary_graphs = []
+
+    for _ in range(num_samples):
+        boundary_graphs.append(trainer.evaluate(bernoulli=True))
+
+    if from_best_boundary_graph:
+        boundary_graphs = get_best_boundary_graph(trainer,
+                                                   boundary_graphs,
+                                                   original_class_idx,
+                                                   adjacent_class_idx, 'embeds').T
+    else:
+        boundary_graphs = trainer.predict_batch(boundary_graphs)['embeds'].T
+
+    return boundary_margin(dataset_list_pred[original_class_idx].model_transform(model, key='embeds').T,
+                           boundary_graphs)
+
+
+def get_model_boundary_thickness(trainer,
+                                 dataset_list_pred,
+                                 model,
+                                 original_class_idx,
+                                 adjacent_class_idx,
+                                 num_samples,
+                                 from_best_boundary_graph=False):
+    boundary_graphs = []
+
+    for _ in range(num_samples):
+        boundary_graphs.append(trainer.evaluate(bernoulli=True))
+
+    if from_best_boundary_graph:
+        boundary_graphs = get_best_boundary_graph(trainer,
+                                                  boundary_graphs,
+                                                  original_class_idx,
+                                                  adjacent_class_idx, 'embeds').unsqueeze(1)
+    else:
+        boundary_graphs = trainer.predict_batch(boundary_graphs)['embeds'].T
+
+    return boundary_thickness(dataset_list_pred[original_class_idx].model_transform(model, key='embeds').T,
+                              boundary_graphs,
+                              model,
+                              original_class_idx,
+                              adjacent_class_idx,
+                              gamma=0.75,
+                              num_points=50)
+
+
+def get_best_boundary_graph(trainer,
+                            boundary_graphs,
+                            original_class_idx,
+                            adjacent_class_idx,
+                            key):
+
+    boundary_predicted_batch = trainer.predict_batch(boundary_graphs)
+    boundary_graph_probs = boundary_predicted_batch['probs']
+
+    best_graph_idx = torch.argmin((boundary_graph_probs[:, original_class_idx] - 0.5).abs()
+                                  + (boundary_graph_probs[:, adjacent_class_idx] - 0.5).abs())
+
+    return boundary_predicted_batch[key][best_graph_idx, :]
+
+def get_model_complexity(trainer,
+                         num_samples):
+
+    boundary_graphs = []
+
+    for _ in range(num_samples):
+        boundary_graphs.append(trainer.evaluate(bernoulli=True))
+
+    boundary_graphs = trainer.predict_batch(boundary_graphs)['embeds_last'].T
+
+    return boundary_complexity(boundary_graphs)

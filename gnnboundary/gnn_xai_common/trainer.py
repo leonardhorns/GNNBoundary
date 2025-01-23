@@ -103,6 +103,11 @@ class Trainer:
         return self.discriminator(batch)
 
     @torch.no_grad()
+    def predict_batch(self, Gs):
+        batch = pyg.data.Batch.from_data_list([self.dataset.convert(G, generate_label=True) for G in Gs])
+        return self.discriminator(batch)
+
+    @torch.no_grad()
     def quantatitive(self, sample_size=1000, sample_fn=None):
         sample_fn = sample_fn or (lambda: self.evaluate(bernoulli=True))
         p = []
