@@ -164,8 +164,6 @@ class GraphSampler(nn.Module):
         else:
             if seed is not None:
                 torch.manual_seed(seed)
-            else:
-                torch.seed()
             return torch.rand_like(target)
 
     def sample_A(self, seed=None, expected=False) -> torch.Tensor:
@@ -214,24 +212,32 @@ class GraphSampler(nn.Module):
         Sample a graph with i.i.d. Concrete distributed edges
         :return: a batch containing a single graph
         """
-        X = self.sample_X(seed=seed, expected=expected)
-        A = self.sample_A(seed=seed, expected=expected)
-        E = self.sample_E(seed=seed, expected=expected)
-        cont_data, disc_data = None, None
+        cont_graphs, disc_graphs = [], []
+        for _ in range(k):
+            X = self.sample_X(seed=seed, expected=expected)
+            A = self.sample_A(seed=seed, expected=expected)
+            E = self.sample_E(seed=seed, expected=expected)
+            
+            if mode in ['continuous', 'both']:
+                cont_graphs.append(pyg.data.Data(
+                    x=X,
+                    edge_index=self.edge_index,
+                    edge_weight=A,
+                    edge_attr=E,
+                ))
+            if mode in ['discrete', 'both']:
+                disc_graphs.append(pyg.data.Data(
+                    x=torch.eye(self.k)[X.argmax(dim=-1)].float(),
+                    edge_index=self.edge_index,
+                    edge_weight=(A > 0.5).float(),
+                    edge_attr=torch.eye(self.l)[E.argmax(dim=-1)].float() if self.eta is not None else E,
+                ))
+                
         if mode in ['continuous', 'both']:
-            cont_data = pyg.data.Batch.from_data_list([pyg.data.Data(
-                x=X,
-                edge_index=self.edge_index,
-                edge_weight=A,
-                edge_attr=E,
-            ) for _ in range(k)])
+            cont_data = pyg.data.Batch.from_data_list(cont_graphs)
         if mode in ['discrete', 'both']:
-            disc_data = pyg.data.Batch.from_data_list([pyg.data.Data(
-                x=torch.eye(self.k)[X.argmax(dim=-1)].float(),
-                edge_index=self.edge_index,
-                edge_weight=(A > 0.5).float(),
-                edge_attr=torch.eye(self.l)[E.argmax(dim=-1)].float() if self.eta is not None else E,
-            ) for _ in range(k)])
+            disc_data = pyg.data.Batch.from_data_list(disc_graphs)
+        
         if mode == 'both':
             return cont_data, disc_data
         elif mode == 'continuous':
@@ -257,12 +263,14 @@ class GraphSampler(nn.Module):
 
         # add node features
         if self.xi is not None:
-            node_cls = self.xi.argmax(dim=1)
+            # node_cls = self.xi.argmax(dim=1)
+            node_cls = torch.multinomial(self.p, 1).squeeze()
             nx.set_node_attributes(G, {v: {'label': c.item()} for v, c in enumerate(node_cls)})
 
         # add edge features
         if self.eta is not None:
-            edge_cls = self.eta.argmax(dim=1)
+            # edge_cls = self.eta.argmax(dim=1)
+            edge_cls = torch.multinomial(self.q, 1).squeeze()
             nx.set_edge_attributes(G, {(u, v): {'label': c.item()} for (u, v), c in zip(self.edges, edge_cls)})
 
         return G

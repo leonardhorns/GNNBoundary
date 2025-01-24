@@ -21,22 +21,21 @@ class Trainer:
                  sampler,
                  discriminator,
                  criterion,
-                 scheduler,
-                 optimizer,
+                 optim_factory,
                  dataset,
                  budget_penalty=None,):
         self.sampler = sampler
         self.discriminator = discriminator
         self.criterion = criterion
         self.budget_penalty = budget_penalty
-        self.scheduler = scheduler
-        self.optimizer = optimizer if isinstance(optimizer, list) else [optimizer]
+        self.optim_factory = optim_factory
         self.dataset = dataset
-        self.iteration = 0
+        self.init()
 
     def init(self):
         self.sampler.init()
         self.iteration = 0
+        self.optimizer, self.scheduler = self.optim_factory(self.sampler)
 
     def train(self, iterations,
               show_progress=True,
@@ -52,6 +51,10 @@ class Trainer:
         self.discriminator.eval()
         self.sampler.train()
         budget_penalty_weight = w_budget_init
+        
+        logs = {
+            'cls_probs': [],
+        }
         for _ in (bar := tqdm(
             range(int(iterations)),
             initial=self.iteration,
@@ -60,16 +63,20 @@ class Trainer:
         )):
             for opt in self.optimizer:
                 opt.zero_grad()
-            cont_data = self.sampler(k=k_samples, mode='continuous')
-            disc_data = self.sampler(k=1, mode='discrete', expected=True)
+
+            cont_data, disc_data = self.sampler(k=k_samples, mode='both')
             # TODO: potential bug
             cont_out = self.discriminator(cont_data, edge_weight=cont_data.edge_weight)
             disc_out = self.discriminator(disc_data, edge_weight=disc_data.edge_weight)
+            expected_probs = disc_out["probs"].mean(dim=0)
+            logs['cls_probs'].append(expected_probs.detach())
+
             if target_probs and all([
-                min_p <= disc_out["probs"][0, classes].item() <= max_p
+                min_p <= expected_probs[classes].item() <= max_p
                 for classes, (min_p, max_p) in target_probs.items()
             ]):
                 if target_size and self.sampler.expected_m <= target_size:
+                    logs['final_probs'] = expected_probs.detach()
                     break
                 budget_penalty_weight *= w_budget_inc
             else:
@@ -94,28 +101,33 @@ class Trainer:
             # print(f"{iteration=}, loss={loss.item():.2f}, {size=}, scores={score_dict}")
             self.iteration += 1
         else:
-            return False
-        return True
+            return False, logs
+        return True, logs
 
     @torch.no_grad()
     def predict(self, G):
         batch = pyg.data.Batch.from_data_list([self.dataset.convert(G, generate_label=True)])
         return self.discriminator(batch)
-
+    
     @torch.no_grad()
     def predict_batch(self, Gs):
         batch = pyg.data.Batch.from_data_list([self.dataset.convert(G, generate_label=True) for G in Gs])
         return self.discriminator(batch)
 
     @torch.no_grad()
-    def quantatitive(self, sample_size=1000, sample_fn=None):
-        sample_fn = sample_fn or (lambda: self.evaluate(bernoulli=True))
-        p = []
-        for i in range(1000):
-            p.append(self.predict(sample_fn())["probs"][0].numpy().astype(float))
+    def quantatitive(self, sample_size=1000, sample_fn=None, use_train_sampling=False):
+        if use_train_sampling:
+            self.sampler.eval()
+            samples = self.sampler(k=sample_size, mode='discrete')
+            probs = self.discriminator(samples, edge_weight=samples.edge_weight)["probs"]
+        else:
+            sample_fn = sample_fn or (lambda: self.evaluate(bernoulli=True))
+            graphs = [sample_fn() for _ in range(sample_size)]
+            probs = self.predict_batch(graphs)["probs"]
         return dict(label=list(self.dataset.GRAPH_CLS.values()),
-                    mean=np.mean(p, axis=0),
-                    std=np.std(p, axis=0))
+                    mean=probs.mean(dim=0),
+                    std=probs.std(dim=0))
+        
 
     @torch.no_grad()
     def quantatitive_baseline(self, **kwargs):
@@ -173,15 +185,43 @@ class Trainer:
         os.makedirs(path, exist_ok=True)
         self.sampler.save(f"{path}/{name}.pt")
 
-    def batch_generate(self, cls_idx, total, epochs, show_progress=True):
+    def batch_generate(self, cls_idx, total, num_boundary_samples=0, show_runs=False, **train_args):
         pbar = tqdm(total=total)
         count = 0
+        logs = []
         while count < total:
             self.init()
-            if self.train(epochs, show_progress=show_progress):
+            converged, run_logs = self.train(**train_args)
+            run_logs["converged"] = converged
+
+            if show_runs:
+                cls_probs = torch.stack(run_logs['cls_probs']).T
+
+                for cls in cls_idx:
+                    plt.plot(cls_probs[cls], label=f"cls {cls}")
+                plt.legend()
+                plt.ylim(0, 1)
+                plt.savefig(f"plots/quantitative/{count}.png", bbox_inches="tight", dpi=100)
+                plt.show()
+            del run_logs['cls_probs']
+
+            if converged:
                 self.save_sampler(cls_idx)
-                count += 1
-                pbar.update(1)
+
+                if num_boundary_samples > 0:
+                    idx = list(cls_idx)
+                    run_logs["train_scores"] = self.quantatitive(sample_size=num_boundary_samples, use_train_sampling=True)
+                    run_logs["eval_scores"] = self.quantatitive(sample_size=num_boundary_samples)
+
+                    if show_runs:
+                        print("final", run_logs["final_probs"][idx].tolist())
+                        print("train", run_logs["train_scores"]["mean"][idx].tolist())
+                        print("eval", run_logs["eval_scores"]["mean"][idx].tolist())
+
+            logs.append(run_logs)
+            count += 1
+            pbar.update(1)
+        return logs
 
     def get_training_success_rate(self, total, epochs, show_progress=False):
         iters = []
