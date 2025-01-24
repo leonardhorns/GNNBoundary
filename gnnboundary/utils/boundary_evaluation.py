@@ -212,9 +212,13 @@ def sample_valid_boundary_graphs(trainer,
             cur_samples += 1
         if cur_tries % 1000 == 0:
             print(f'Sampled {cur_tries}, successful samples: {cur_samples}, remaining: {num_samples}')
-        if cur_tries > tries_lim and cur_samples == 0:
+
+        if (cur_tries + 1) % tries_lim == 0 and cur_samples == 0:
             p_min -= 0.05
             p_max += 0.05
+
+            print(f'Loosening sampling criteria. p_min: {p_min}, p_max: {p_max}')
+
         cur_tries += 1
 
     return boundary_graphs
