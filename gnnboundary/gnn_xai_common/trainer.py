@@ -11,6 +11,7 @@ import pickle
 import glob
 import torch.nn.functional as F
 import torch_geometric as pyg
+import time
 
 # TODO: refactor
 # from .datasets import *
@@ -181,9 +182,10 @@ class Trainer:
             path = f"{root}/{self.dataset.name}/{cls_idx}"
         else:
             path = f"{root}/{self.dataset.name}/{'-'.join(map(str, cls_idx))}"
-        name = secrets.token_hex(4).upper() # TODO: use hash of the graph to avoid duplicate
+        name = time.strftime("%Y%m%d-%H%M%S")
         os.makedirs(path, exist_ok=True)
         self.sampler.save(f"{path}/{name}.pt")
+        return f"{path}/{name}.pt"
 
     def batch_generate(self, cls_idx, total, num_boundary_samples=0, show_runs=False, **train_args):
         pbar = tqdm(total=total)
@@ -206,7 +208,8 @@ class Trainer:
             del run_logs['cls_probs']
 
             if converged:
-                self.save_sampler(cls_idx)
+                save_path = self.save_sampler(cls_idx)
+                run_logs["save_path"] = save_path
 
                 if num_boundary_samples > 0:
                     idx = list(cls_idx)
