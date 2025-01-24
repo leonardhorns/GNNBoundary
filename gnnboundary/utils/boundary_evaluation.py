@@ -122,15 +122,13 @@ def boundary_complexity(boundary_graph_embedding):
 
 
 def get_model_boundary_margin(trainer,
+                              boundary_graphs,
                               dataset_list_pred,
                               model,
                               original_class_idx,
                               adjacent_class_idx,
-                              num_samples,
                               from_best_boundary_graph=False):
 
-
-    boundary_graphs = sample_valid_boundary_graphs(trainer, num_samples, original_class_idx, adjacent_class_idx)
 
     if from_best_boundary_graph:
         boundary_graphs = get_best_boundary_graph(trainer,
@@ -145,14 +143,13 @@ def get_model_boundary_margin(trainer,
 
 
 def get_model_boundary_thickness(trainer,
+                                 boundary_graphs,
                                  dataset_list_pred,
                                  model,
                                  original_class_idx,
                                  adjacent_class_idx,
-                                 num_samples,
                                  from_best_boundary_graph=False):
 
-    boundary_graphs = sample_valid_boundary_graphs(trainer, num_samples, original_class_idx, adjacent_class_idx)
 
     if from_best_boundary_graph:
         boundary_graphs = get_best_boundary_graph(trainer,
@@ -187,12 +184,8 @@ def get_best_boundary_graph(trainer,
 
 
 def get_model_complexity(trainer,
-                         original_class_idx,
-                         adjacent_class_idx,
-                         num_samples):
+                         boundary_graphs):
 
-
-    boundary_graphs = sample_valid_boundary_graphs(trainer, num_samples, original_class_idx, adjacent_class_idx)
     boundary_graphs = trainer.predict_batch(boundary_graphs)['embeds_last'].T
 
     return boundary_complexity(boundary_graphs)
@@ -208,7 +201,8 @@ def sample_valid_boundary_graphs(trainer,
 
     p_min = 0.45
     p_max = 0.55
-
+    cur_tries = 0
+    tries_lim = 10000
     while cur_samples < num_samples:
         cur_boundary_graph = trainer.evaluate(bernoulli=True)
         probs = trainer.predict(cur_boundary_graph)['probs']
@@ -216,5 +210,77 @@ def sample_valid_boundary_graphs(trainer,
         if p_min <= probs[0][original_class_idx] <= p_max and p_min <= probs[0][adjacent_class_idx] <= p_max:
             boundary_graphs.append(cur_boundary_graph)
             cur_samples += 1
+        if cur_tries % 1000 == 0:
+            print(f'Sampled {cur_tries}, successful samples: {cur_samples}, remaining: {num_samples}')
+        if cur_tries > tries_lim and cur_samples == 0:
+            p_min -= 0.05
+            p_max += 0.05
+        cur_tries += 1
 
     return boundary_graphs
+
+
+def evaluate_boundary(dataset,
+                      trainers,
+                      adjacent_class_pairs,
+                      model,
+                      num_samples):
+
+    num_classes = len(dataset.GRAPH_CLS)
+    boundary_margin_mat = np.zeros((num_classes, num_classes))
+    boundary_thickness_mat = np.zeros((num_classes, num_classes))
+    dataset_list_pred = dataset.split_by_pred(model)
+    complexity = {}
+    for trainer, class_pair in zip(trainers, adjacent_class_pairs):
+        c1, c2 = class_pair
+        boundary_graphs = sample_valid_boundary_graphs(trainer, num_samples, c1, c2)
+
+        print(f'Calculating boundary complexity for {c1} and {c2}')
+        complexity[class_pair] = get_model_complexity(trainer, boundary_graphs).item()
+
+        print(f'Calculating boundary margin for {c1} and {c2}')
+        margin = get_model_boundary_margin(trainer,
+                                           boundary_graphs,
+                                           dataset_list_pred,
+                                           model,
+                                           original_class_idx=c1,
+                                           adjacent_class_idx=c2,
+                                           from_best_boundary_graph=False)
+
+        print(f'Calculating boundary thickness for {c1} and {c2}')
+        thickness = get_model_boundary_thickness(trainer,
+                                                 boundary_graphs,
+                                                 dataset_list_pred,
+                                                 model,
+                                                 original_class_idx=c1,
+                                                 adjacent_class_idx=c2,
+                                                 from_best_boundary_graph=False)
+        boundary_thickness_mat[c1, c2] = thickness
+        boundary_margin_mat[c1, c2] = margin
+
+        print(f'Calculating boundary margin for {c2} and {c1}')
+        margin = get_model_boundary_margin(trainer,
+                                           boundary_graphs,
+                                           dataset_list_pred,
+                                           model,
+                                           original_class_idx=c2,
+                                           adjacent_class_idx=c1,
+                                           from_best_boundary_graph=False)
+
+        print(f'Calculating boundary complexity for {c2} and {c1}')
+        thickness = get_model_boundary_thickness(trainer,
+                                                 boundary_graphs,
+                                                 dataset_list_pred,
+                                                 model,
+                                                 original_class_idx=c2,
+                                                 adjacent_class_idx=c1,
+                                                 from_best_boundary_graph=False)
+
+        boundary_margin_mat[c2, c1] = margin
+        boundary_thickness_mat[c2, c1] = thickness
+
+    return dict(
+        boundary_margin=boundary_margin_mat,
+        boundary_thickness=boundary_thickness_mat,
+        boundary_complexity=complexity
+    )
