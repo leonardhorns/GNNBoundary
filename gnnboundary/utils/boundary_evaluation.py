@@ -16,6 +16,10 @@ def boundary_margin(graph_embedding,
 
     # shuffle embeddings around to generate random ordering
 
+    print(f'Mean of std across embedding dimension from samples : {torch.mean(torch.std(graph_embedding, dim=-1))}')
+    print(
+        f'Mean of std across embedding dimension from generated samples : {torch.mean(torch.std(boundary_graph_embedding, dim=-1))}')
+
     graph_embedding = graph_embedding.unsqueeze(1)
     boundary_graph_embedding = boundary_graph_embedding.unsqueeze(2)
 
@@ -248,6 +252,7 @@ def evaluate_boundary(dataset,
     dataset_list_pred = dataset.split_by_pred(model)
     complexity = {}
     for trainer, class_pair in zip(trainers, adjacent_class_pairs):
+
         c1, c2 = class_pair
         boundary_graphs = sample_valid_boundary_graphs(trainer, num_samples, c1, c2)
 
