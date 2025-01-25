@@ -15,21 +15,11 @@ def boundary_margin(graph_embedding,
     """
 
     # shuffle embeddings around to generate random ordering
-    num_samples = min(graph_embedding.shape[1], boundary_graph_embedding.shape[1])
 
-    margin = float('inf')
+    graph_embedding = graph_embedding.unsqueeze(1)
+    boundary_graph_embedding = boundary_graph_embedding.unsqueeze(2)
 
-    #iterate through pairs of graph embeddings
-    for idx in range(num_samples):
-        g1 = graph_embedding[:, idx]
-        g2 = boundary_graph_embedding[:, idx]
-
-        #calculate margin
-        cur_margin = torch.norm(g2 - g1, p=2).item()
-
-        #update margin
-        if cur_margin < margin:
-            margin = cur_margin
+    margin = torch.norm(graph_embedding - boundary_graph_embedding, p=2, dim=0).min().item()
 
     return margin
 
@@ -56,12 +46,33 @@ def boundary_thickness(graph_embedding,
         thickness (float) : boundary thickness margin
     """
 
-    #shuffle data around
-    num_samples = min(graph_embedding.shape[1], boundary_graph_embedding.shape[1])
+    # # Compute pairwise distances between all columns in graph_embedding and boundary_graph_embedding
+    # dist_matrix = torch.norm(graph_embedding[:, None, :] - boundary_graph_embedding[:, :, None], p=2, dim=0)
+    #
+    # # Generate points along the line segment between g1 and g2 using broadcasting
+    # lambda_values = torch.linspace(0, 1.0, num_points).unsqueeze(0)  # Shape: (1, num_points)
+    #
+    # h0 = (graph_embedding[:, : , None] * lambda_values).unsqueeze(1).expand(-1, boundary_graph_embedding.shape[-1], -1, -1)
+    # h1 = (boundary_graph_embedding[:, : , None] * (1 -lambda_values)).unsqueeze(2)
+    #
+    # interpolated_points = h0 + h1 # Shape: (embedding_dim, num_points, batch_size)
+    #
+    # # Reshape the tensor for model scoring (shape: (num_points, batch_size, embedding_dim))
+    # interpolated_points = interpolated_points.permute(3,1,2,0)  # Shape: (num_points, batch_size, embedding_dim)
+    #
+    # # Batch model scoring
+    # y_new_batch = model_scoring_function(embeds=interpolated_points)['probs'].T  # Shape: (num_points, batch_size)
+    #
+    # # Compute thickness for each pair
+    # thickness = []
+    # for i in range(graph_embedding.shape[1]):
+    #     for j in range(boundary_graph_embedding.shape[1]):
+    #         dist = dist_matrix[j, i].item()
+    #         thickness_value = dist * (gamma > (y_new_batch[c1, i, j]  - y_new_batch[c1, i, j] )).sum().item() / num_points
+    #         thickness.append(thickness_value)
 
-    graph_embedding = graph_embedding[:, torch.randperm(graph_embedding.shape[1])]
-    boundary_graph_embedding = boundary_graph_embedding[:, torch.randperm(boundary_graph_embedding.shape[1])]
     thickness = []
+    num_samples = min(graph_embedding.shape[1], boundary_graph_embedding.shape[1])
 
     for idx in range(num_samples):
 
@@ -88,6 +99,7 @@ def boundary_thickness(graph_embedding,
 
         thickness.append(dist.item() * (gamma > y_new_batch[c1, :] - y_new_batch[c2, :]).sum().item() / num_points)
 
+    #Return the average thickness
     return np.mean(thickness)
 
 
@@ -111,10 +123,10 @@ def boundary_complexity(boundary_graph_embedding):
 
     #get only real values
     eigenvalues = eigenvalues.real
+    eigenvalues[eigenvalues < 0] = 0 #eigenvalues should not be less than 0, possibly due to numerical imprecision
     normalised_eigenvalues = eigenvalues / eigenvalues.sum()
 
     #shannon entropy: sum(p_i * log(p_i))
-    normalised_eigenvalues[normalised_eigenvalues < 0] = 0 #eigenvalues should not be less than 0, possibly due to numerical imprecision
     shannon_entropy = -torch.sum((normalised_eigenvalues * torch.log(normalised_eigenvalues)).nan_to_num()) #nan_to_num(), because in torch inf * 0 = nan
 
     #complexity is shannon_entropy / log(embedding_dimension)
@@ -271,7 +283,7 @@ def evaluate_boundary(dataset,
                                            adjacent_class_idx=c1,
                                            from_best_boundary_graph=False)
 
-        print(f'Calculating boundary complexity for {c2} and {c1}')
+        print(f'Calculating boundary thickness for {c2} and {c1}')
         thickness = get_model_boundary_thickness(trainer,
                                                  boundary_graphs,
                                                  dataset_list_pred,
