@@ -116,10 +116,12 @@ class Trainer:
         return self.discriminator(batch)
 
     @torch.no_grad()
-    def quantatitive(self, sample_size=1000, sample_fn=None, use_train_sampling=False):
+    def quantatitive(self, sample_size=1000, sample_fn=None, use_train_sampling=False, return_model_out=False):
         if use_train_sampling:
             self.sampler.eval()
             samples = self.sampler(k=sample_size, mode='discrete')
+            if return_model_out:
+                return self.discriminator(samples, edge_weight=samples.edge_weight)
             probs = self.discriminator(samples, edge_weight=samples.edge_weight)["probs"]
         else:
             sample_fn = sample_fn or (lambda: self.evaluate(bernoulli=True))
@@ -128,7 +130,6 @@ class Trainer:
         return dict(label=list(self.dataset.GRAPH_CLS.values()),
                     mean=probs.mean(dim=0),
                     std=probs.std(dim=0))
-        
 
     @torch.no_grad()
     def quantatitive_baseline(self, **kwargs):
