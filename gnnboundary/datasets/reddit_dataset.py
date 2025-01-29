@@ -12,8 +12,8 @@ class RedditDataset(BaseGraphDataset):
     }
 
     GRAPH_CLS = {
-        0: 'Ask-answer',
-        1: 'Discussion',
+        0: 'Q&A',
+        1: 'Discuss',
     }
 
     def __init__(self, *,
