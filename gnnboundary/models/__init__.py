@@ -1,1 +1,1 @@
-from gnn_xai_common.models import *
+from gnn_xai_common import *

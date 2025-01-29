@@ -2,4 +2,4 @@ from .criteria import *
 from .datasets import *
 from .models import *
 from .utils import *
-from .gnn_xai_common import Evaluator, GraphSampler, Trainer, BaseGraphDataset, draw_matrix
+from .gnn_xai_common import Evaluator, GraphSampler, Trainer, BaseGraphDataset, draw_matrix, GCNClassifier
