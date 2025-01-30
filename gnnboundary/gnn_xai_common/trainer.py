@@ -31,6 +31,8 @@ class Trainer:
         self.budget_penalty = budget_penalty
         self.optim_factory = optim_factory
         self.dataset = dataset
+        
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.init()
 
     def init(self):
@@ -52,9 +54,10 @@ class Trainer:
         self.discriminator.eval()
         self.sampler.train()
         budget_penalty_weight = w_budget_init
-        
+
         logs = {
             'cls_probs': [],
+            'nan_samples': [],
         }
         for _ in (bar := tqdm(
             range(int(iterations)),
@@ -66,18 +69,27 @@ class Trainer:
                 opt.zero_grad()
 
             cont_data, disc_data = self.sampler(k=k_samples, mode='both')
+            cont_data.to(self.device)
+            disc_data.to(self.device)
             # TODO: potential bug
             cont_out = self.discriminator(cont_data, edge_weight=cont_data.edge_weight)
             disc_out = self.discriminator(disc_data, edge_weight=disc_data.edge_weight)
-            expected_probs = disc_out["probs"].mean(dim=0)
-            logs['cls_probs'].append(expected_probs.detach())
+            
+            disc_props = disc_out["probs"][~disc_out["probs"].isnan().any(dim=1)]
+            logs["nan_samples"].append(k_samples - disc_props.shape[0])
+            if disc_props.shape[0] != k_samples:
+                print(self.sampler.expected_m)
+                return False, logs
+
+            expected_probs = disc_props.mean(dim=0)
+            logs['cls_probs'].append(expected_probs.detach().cpu())
 
             if target_probs and all([
                 min_p <= expected_probs[classes].item() <= max_p
                 for classes, (min_p, max_p) in target_probs.items()
             ]):
                 if target_size and self.sampler.expected_m <= target_size:
-                    logs['final_probs'] = expected_probs.detach()
+                    logs['final_probs'] = expected_probs.detach().cpu()
                     break
                 budget_penalty_weight *= w_budget_inc
             else:
@@ -87,6 +99,7 @@ class Trainer:
             if self.budget_penalty:
                 loss += self.budget_penalty(self.sampler.theta) * budget_penalty_weight
             loss.backward()  # Back-propagate gradients
+            #torch.nn.utils.clip_grad_norm_(self.sampler.parameters(), 1.0)
 
             for opt in self.optimizer:
                 opt.step()
@@ -108,18 +121,20 @@ class Trainer:
     @torch.no_grad()
     def predict(self, G):
         batch = pyg.data.Batch.from_data_list([self.dataset.convert(G, generate_label=True)])
+        batch = batch.to(self.device)
         return self.discriminator(batch)
     
     @torch.no_grad()
     def predict_batch(self, Gs):
         batch = pyg.data.Batch.from_data_list([self.dataset.convert(G, generate_label=True) for G in Gs])
+        batch = batch.to(self.device)
         return self.discriminator(batch)
 
     @torch.no_grad()
     def quantatitive(self, sample_size=1000, sample_fn=None, use_train_sampling=False, return_model_out=False):
         if use_train_sampling:
             self.sampler.eval()
-            samples = self.sampler(k=sample_size, mode='discrete')
+            samples = self.sampler(k=sample_size, mode='discrete').to(self.device)
             if return_model_out:
                 return self.discriminator(samples, edge_weight=samples.edge_weight)
             probs = self.discriminator(samples, edge_weight=samples.edge_weight)["probs"]

@@ -7,9 +7,10 @@ from .nn.functional import smooth_maximum_weight_propagation, global_sum_pool_we
 
 
 class GCNClassifier(nn.Module):
-    def __init__(self, hidden_channels, node_features, num_classes, num_layers=3, dropout=0):
+    def __init__(self, hidden_channels, node_features, num_classes, num_layers=3, dropout=0, use_gat=False):
         super().__init__()
-        self.conv = pyg.nn.GCN(in_channels=node_features,
+        model = pyg.nn.GAT if use_gat else pyg.nn.GCN
+        self.conv = model(in_channels=node_features,
                                hidden_channels=hidden_channels,
                                num_layers=num_layers,
                                act=nn.LeakyReLU(inplace=True),
