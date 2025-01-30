@@ -178,17 +178,17 @@ class Trainer:
         self.show(G)
         return G
 
-    def save_sampler(self, cls_idx, root="sampler_ckpts"):
+    def save_sampler(self, cls_idx, root="sampler_ckpts", retrain=False):
         if isinstance(cls_idx, int):
-            path = f"{root}/{self.dataset.name}/{cls_idx}"
+            path = f"{root}/{self.dataset.name}{f'_retrained' if retrain else ''}/{cls_idx}"
         else:
-            path = f"{root}/{self.dataset.name}/{'-'.join(map(str, cls_idx))}"
+            path = f"{root}/{self.dataset.name}{f'_retrained' if retrain else ''}/{'-'.join(map(str, cls_idx))}"
         name = time.strftime("%Y%m%d-%H%M%S")
         os.makedirs(path, exist_ok=True)
         self.sampler.save(f"{path}/{name}.pt")
         return f"{path}/{name}.pt"
 
-    def batch_generate(self, cls_idx, total, num_boundary_samples=0, show_runs=False, **train_args):
+    def batch_generate(self, cls_idx, total, num_boundary_samples=0, show_runs=False, retrain=False, **train_args):
         pbar = tqdm(total=total)
         count = 0
         logs = []
@@ -209,7 +209,7 @@ class Trainer:
             del run_logs['cls_probs']
 
             if converged:
-                save_path = self.save_sampler(cls_idx)
+                save_path = self.save_sampler(cls_idx, retrain=retrain)
                 run_logs["save_path"] = save_path
 
                 if num_boundary_samples > 0:

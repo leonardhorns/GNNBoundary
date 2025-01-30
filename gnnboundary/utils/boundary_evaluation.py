@@ -1,5 +1,7 @@
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
+
 
 def boundary_margin(graph_embedding,
                     boundary_graph_embedding):
@@ -123,7 +125,7 @@ def boundary_complexity(boundary_graph_embedding):
 
     #eigenvalue obtained from PCA decomposition according to paper
     covariance_matrix = torch.cov(boundary_graph_embedding)
-    eigenvalues, _ = torch.linalg.eig(covariance_matrix)
+    eigenvalues, eigenvectors = torch.linalg.eig(covariance_matrix)
 
     #get only real values
     eigenvalues = eigenvalues.real
@@ -273,6 +275,14 @@ def evaluate_boundary(dataset,
         c1, c2 = class_pair
         boundary_graphs = sample_valid_boundary_graphs(trainer, num_samples, c1, c2)
 
+        pca_analysis(
+            dataset_list_pred[c1].model_transform(model, key='embeds'),
+            dataset_list_pred[c2].model_transform(model, key='embeds'),
+            boundary_graphs['embeds'],
+            dataset.name.lower(),
+            c1,
+            c2
+        )
         print(f'Calculating boundary complexity for {c1} and {c2}')
         complexity[class_pair] = boundary_complexity(boundary_graphs['embeds_last'].T).item()
 
@@ -319,3 +329,119 @@ def evaluate_boundary(dataset,
         boundary_thickness=boundary_thickness_mat,
         boundary_complexity=complexity
     )
+
+
+def pca_analysis(embedding_class_1, embedding_class_2, boundary_embedding, dataset_name, c1, c2, k=2, num_samples=100):
+
+    c1_size = embedding_class_1.shape[0] # (num samples * dimension)
+    c2_size = embedding_class_2.shape[0]
+    b_size = boundary_embedding.shape[0]
+
+    embeddings = torch.cat((embedding_class_1, embedding_class_2, boundary_embedding), dim=0).T
+    U, S, V = torch.svd(torch.cov(embeddings))
+
+    principal_components = U[:, :k]
+    embedding_pca = torch.mm((embeddings - torch.mean(embeddings, dim=0)).T, principal_components)
+
+    import matplotlib.pyplot as plt
+
+    plt.figure(figsize=(8, 6))  # Set a larger figure size
+    plt.title('PCA Analysis', fontsize=14, fontweight='bold')
+
+    # Class 1
+    plt.scatter(
+        embedding_pca[:c1_size, 0][torch.randperm(c1_size)[:min(num_samples, c1_size)]],
+        embedding_pca[:c1_size, 1][torch.randperm(c1_size)[:min(num_samples, c1_size)]],
+        color='royalblue',
+        label=f'Class {c1}',
+        alpha=0.6,
+        s=50  # Marker size
+    )
+
+    # Class 2
+    plt.scatter(
+        embedding_pca[c1_size:c1_size + c2_size, 0][torch.randperm(c2_size)[:min(num_samples, c2_size)]],
+        embedding_pca[c1_size:c1_size + c2_size, 1][torch.randperm(c2_size)[:min(num_samples, c2_size)]],
+        color='seagreen',
+        label=f'Class {c2}',
+        alpha=0.6,
+        s=50
+    )
+
+    # Boundary
+    plt.scatter(
+        embedding_pca[c1_size + c2_size:, 0][torch.randperm(b_size)[:min(num_samples, b_size)]],
+        embedding_pca[c1_size + c2_size:, 1][torch.randperm(b_size)[:min(num_samples, b_size)]],
+        color='crimson',
+        label='Boundary',
+        alpha=1,
+        edgecolors='black',  # Add black edges
+        linewidths=1.5,  # Thicker edges
+        s=50  # Larger marker size for emphasis
+    )
+
+    # Axis labels
+    plt.xlabel('Principal Component 1', fontsize=12)
+    plt.ylabel('Principal Component 2', fontsize=12)
+
+    # Grid
+    plt.grid(color='gray', linestyle='--', linewidth=0.5, alpha=0.7)
+
+    # Legend
+    plt.legend(fontsize=10, loc='upper right', frameon=True, framealpha=0.9)
+
+    # Save the plot
+    plt.savefig(f'./figures/{dataset_name}/pca_{c1}_{c2}_embdes.png', dpi=300, bbox_inches='tight')
+
+    # Show the plot
+    plt.show()
+
+
+def plot_sampler_distribution(trainer, dataset_name, class_pair):
+
+    c1, c2 = class_pair
+    p = trainer.sampler.p.detach().numpy()
+    num_p = p.shape[1]
+
+    fig, axs = plt.subplots(1, num_p + 1, figsize=(15, 6))
+    bins = np.linspace(0, 1, 20)
+
+    axs[0].hist(
+        trainer.sampler.theta.detach().numpy(),
+        bins=bins,
+        color='blue',
+        edgecolor='black',
+        alpha=0.7,
+        align='mid'
+    )
+    axs[0].set_title("Histogram of \nTheta (Edge Weights)", fontsize=12)
+    axs[0].set_xlabel("Probability", fontsize=10)
+    axs[0].set_ylabel("Density", fontsize=10)
+    axs[0].set_xlim(0, 1)
+
+    for i in range(num_p):
+        axs[i + 1].hist(
+            p[:, i],
+            bins=bins,
+            color='blue',
+            edgecolor='black',
+            alpha=0.7,
+            align='mid'
+        )
+        axs[i + 1].set_title(f"Histogram of \np{i} (Feature {i} weights) \nclass pair ({c1},{c2})", fontsize=12)
+        axs[i + 1].set_xlabel("Probability", fontsize=10)
+        axs[i + 1].set_ylabel("Density", fontsize=10)
+        axs[i + 1].set_xlim(0, 1)
+
+    for ax in axs:
+        ax.tick_params(axis='both', labelsize=8)
+
+    plt.tight_layout()
+    fig.subplots_adjust(wspace=0.3)
+
+    fig.savefig(f'./figures/{dataset_name}/sampler_hist_{c1}_{c2}.png', dpi=300, bbox_inches='tight')
+    plt.show()
+
+
+
+
