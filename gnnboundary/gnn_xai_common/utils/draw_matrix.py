@@ -9,7 +9,7 @@ sns.set(font_scale=1.6)
 
 def draw_matrix(matrix, names, fmt='.2f', vmin=0, vmax=None,
                 annotsize=20, labelsize=18, xlabel='Predicted', ylabel='Actual',
-                max_label_length=15, labelpad=20, file_name=None, save_path=None):
+                max_label_length=15, labelpad=20, file_name=None, save_path=None, show_plot=True):
 
     wrapped_names = [textwrap.fill(name, max_label_length) for name in names]
     label_factor = max(1, max(len(name) // max_label_length for name in names))
@@ -40,4 +40,7 @@ def draw_matrix(matrix, names, fmt='.2f', vmin=0, vmax=None,
         plt.savefig(full_path, dpi=300, format='jpg', bbox_inches='tight')
         print(f"Plot saved as: {full_path}")
 
-    plt.show()
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()

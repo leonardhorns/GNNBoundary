@@ -262,7 +262,8 @@ def evaluate_boundary(dataset,
                       trainers,
                       adjacent_class_pairs,
                       model,
-                      num_samples):
+                      num_samples,
+                      experiment_name):
 
     num_classes = len(dataset.GRAPH_CLS)
     boundary_margin_mat = np.zeros((num_classes, num_classes))
@@ -279,9 +280,10 @@ def evaluate_boundary(dataset,
             dataset_list_pred[c1].model_transform(model, key='embeds'),
             dataset_list_pred[c2].model_transform(model, key='embeds'),
             boundary_graphs['embeds'],
-            dataset.name.lower(),
+            experiment_name,
             c1,
-            c2
+            c2,
+            show_plot=False,
         )
         print(f'Calculating boundary complexity for {c1} and {c2}')
         complexity[class_pair] = boundary_complexity(boundary_graphs['embeds_last'].T).item()
@@ -331,7 +333,7 @@ def evaluate_boundary(dataset,
     )
 
 
-def pca_analysis(embedding_class_1, embedding_class_2, boundary_embedding, dataset_name, c1, c2, k=2, num_samples=100):
+def pca_analysis(embedding_class_1, embedding_class_2, boundary_embedding, dataset_name, c1, c2, k=2, num_samples=100, show_plot=True):
 
     c1_size = embedding_class_1.shape[0] # (num samples * dimension)
     c2_size = embedding_class_2.shape[0]
@@ -391,10 +393,13 @@ def pca_analysis(embedding_class_1, embedding_class_2, boundary_embedding, datas
     plt.legend(fontsize=10, loc='upper right', frameon=True, framealpha=0.9)
 
     # Save the plot
-    plt.savefig(f'./figures/{dataset_name}/pca_{c1}_{c2}_embdes.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'./figures/{dataset_name}_pca_{c1}_{c2}_embdes.png', dpi=300, bbox_inches='tight')
 
     # Show the plot
-    plt.show()
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
 
 
 def plot_sampler_distribution(trainer, dataset_name, class_pair):
@@ -441,7 +446,3 @@ def plot_sampler_distribution(trainer, dataset_name, class_pair):
 
     fig.savefig(f'./figures/{dataset_name}/sampler_hist_{c1}_{c2}.png', dpi=300, bbox_inches='tight')
     plt.show()
-
-
-
-

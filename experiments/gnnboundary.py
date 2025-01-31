@@ -4,7 +4,8 @@ import json
 import time
 import os
 import numpy as np
-
+import random
+from tqdm import tqdm
 
 def get_dataset_setup(
         dataset_name,
@@ -88,9 +89,14 @@ def get_dataset_setup(
     return dataset, model
 
 
-def get_trainer(cls_idx, dataset_name, hparams, use_gat=False, use_retrained=False, sampler_path=None):
-    dataset, model = get_dataset_setup(dataset_name, use_gat=use_gat, retrained=use_retrained)
-
+def get_trainer(cls_idx, dataset_name, hparams, use_gat=False, use_retrained=False, sampler_path=None, dataset=None, model=None):
+    if dataset is not None and model is not None:
+        random.seed(12345)
+        np.random.seed(12345)
+        torch.manual_seed(12345)
+    else:
+        dataset, model = get_dataset_setup(dataset_name, use_gat=use_gat, retrained=use_retrained)
+    
     sampler = gnnboundary.GraphSampler(
         max_nodes=hparams["max_nodes"],
         temperature=0.15,
@@ -132,7 +138,7 @@ def train_eval(cls_idx, dataset_name, num_runs, hparams, use_gat=False, use_retr
     train_args = dict(
         iterations=500,
         target_probs={cls_idx[0]: (0.45, 0.55), cls_idx[1]: (0.45, 0.55)},
-        show_progress=True,
+        show_progress=False,
         target_size=hparams["target_size"],
         w_budget_init=1,
         w_budget_inc=1.15,
@@ -142,7 +148,7 @@ def train_eval(cls_idx, dataset_name, num_runs, hparams, use_gat=False, use_retr
     
     trainer = get_trainer(cls_idx, dataset_name, hparams, use_gat=use_gat, use_retrained=use_retrained)
     logs = trainer.batch_generate(cls_idx, total=num_runs, num_boundary_samples=500, show_runs=show_runs, **train_args)
-    scores = {}
+    scores = {"class_pair": f"{trainer.dataset.GRAPH_CLS[cls_idx[0]]}_{trainer.dataset.GRAPH_CLS[cls_idx[1]]}"}
     
     converged = [l for l in logs if l["converged"]]
     if len(converged) > 0:
@@ -152,6 +158,8 @@ def train_eval(cls_idx, dataset_name, num_runs, hparams, use_gat=False, use_retr
         loss = (means[:, list(cls_idx)] - 0.5).abs() + stds[:, list(cls_idx)]
         best_idx = loss.sum(dim=1).argmin().item()
         
+        means = means[:, list(cls_idx)]
+        stds = stds[:, list(cls_idx)]
         scores |= {
             "best_idx": best_idx,
             "best_mean": means[best_idx].tolist(),
@@ -161,8 +169,6 @@ def train_eval(cls_idx, dataset_name, num_runs, hparams, use_gat=False, use_retr
             "stds_mean": stds.mean(dim=0).tolist(),
             "stds_std": stds.std(dim=0).tolist(),
         }
-        # print(scores)
-        # print(logs)
         
         sampler_ckpt = converged[best_idx]["save_path"]
         scores["sampler_ckpt"] = sampler_ckpt
@@ -172,18 +178,6 @@ def train_eval(cls_idx, dataset_name, num_runs, hparams, use_gat=False, use_retr
     
     total_time = time.time() - start_time
     scores["time"] = total_time
-    
-    print(f"Time: {total_time} seconds")
-    # print(f"Classes: {cls_idx}", f"Num runs: {num_runs}, num samples: {num_samples}", sep="\n", end="\n\n")
-    # print(f"Convergence rate: {convergence_rate}")
-    # if len(converged) > 0:
-    #     print(f"""Train - mean: {scores["train"]["mean_mean"]}, std: {scores["train"]["mean_std"]}
-    #         best_idx: {scores["train"]["best_idx"]},
-    #         best: {scores["train"]["best_mean"]}, std: {scores["train"]["best_std"]}""")
-    #     print(f"""Eval - mean: {scores["eval"]["mean_mean"]}, std: {scores["eval"]["mean_std"]}
-    #         best_idx: {scores["eval"]["best_idx"]},
-    #         best: {scores["eval"]["best_mean"]}, std: {scores["eval"]["best_std"]}""")
-    
     return scores, logs
 
 
@@ -191,26 +185,28 @@ def evaluate_sampler(adjacent_class_pairs,
                      dataset_name,
                      num_samples,
                      hparams,
+                     experiment_name,
+                     use_gat=False,
                      from_retrained_model=False,
                      sampler_ckpt_paths=[],
                      save_path=None):
 
     #make sure that order of sampler_ckpt_paths is the same as adjacent class pairs
     trainers = []
-    dataset, _ = get_dataset_setup(dataset_name, retrained=from_retrained_model)
+    
+    dataset, model = get_dataset_setup(dataset_name, use_gat=use_gat, retrained=from_retrained_model)
     
     for sampler_path, class_pair in zip(sampler_ckpt_paths, adjacent_class_pairs):
-        trainers.append(get_trainer(class_pair, dataset_name=dataset_name, hparams=hparams, sampler_path=sampler_path))
+        trainers.append(get_trainer(class_pair, dataset_name=dataset_name, hparams=hparams, sampler_path=sampler_path, dataset=dataset, model=model))
 
-    dataset, model = get_dataset_setup(dataset_name, use_gat=False)
-
+    save_path = save_path or f'./figures/{dataset_name}'
     evaluation = gnnboundary.evaluate_boundary(dataset,
                                                trainers,
                                                adjacent_class_pairs,
                                                model,
-                                               num_samples)
+                                               num_samples,
+                                               experiment_name)
 
-    save_path = save_path or f'./figures/{dataset_name}'
     evaluation['boundary_margin'][evaluation['boundary_margin'] == 0] = np.nan
     evaluation['boundary_thickness'][evaluation['boundary_thickness'] == 0] = np.nan
 
@@ -219,42 +215,69 @@ def evaluate_sampler(adjacent_class_pairs,
     gnnboundary.draw_matrix(
         dataset.model_evaluate(model)['cm'],
         dataset.GRAPH_CLS.values(),
-        file_name=f'{dataset_name}_cm.png',
+        file_name=f'{experiment_name}_cm.png',
         save_path=save_path,
         fmt='d',
         annotsize=annot_size,
         labelsize=label_size,
+        show_plot=False,
     )
     gnnboundary.draw_matrix(
         evaluation['boundary_margin'],
         dataset.GRAPH_CLS.values(),
         xlabel='Decision boundary',
         ylabel='Decision region',
-        file_name=f'{dataset_name}_boundary_margin.png',
+        file_name=f'{experiment_name}_boundary_margin.png',
         save_path=save_path,
         annotsize=annot_size,
         labelsize=label_size,
+        show_plot=False,
     )
     gnnboundary.draw_matrix(
         evaluation['boundary_thickness'],
         dataset.GRAPH_CLS.values(),
         xlabel='Decision boundary',
         ylabel='Decision region',
-        file_name=f'{dataset_name}_boundary_thickness.png',
+        file_name=f'{experiment_name}_boundary_thickness.png',
         save_path=save_path,
         annotsize=annot_size,
         labelsize=label_size,
+        show_plot=False,
     )
 
     return evaluation
 
 
-def baseline(cls_idx, dataset_name, num_samples=500, use_gat=False, retrained=False):
+def baseline(cls_pairs, dataset_name, num_samples=500, use_gat=False, retrained=False):
     dataset, model = get_dataset_setup(dataset_name, use_gat=use_gat, retrained=retrained)
 
-    generator = gnnboundary.utils.BaselineGenerator(dataset.split_by_class(), cls_idx)
-    samples = generator.sample(num_samples)
+    baseline_scores = {cls_idx: {} for cls_idx in cls_pairs}
+    for cls_idx in tqdm(cls_pairs):
+        generator = gnnboundary.utils.BaselineGenerator(dataset.split_by_class(), cls_idx)
+        samples = generator.sample(num_samples)
 
-    model.eval()
-    probs = model.forward(dataset.convert(samples))['probs']
-    return probs.mean(dim=0), probs.std(dim=0)
+        model.eval()
+        probs = model.forward(dataset.convert(samples))['probs'][:, list(cls_idx)]
+        baseline_scores[cls_idx]["baseline_mean"] = probs.mean(dim=0)
+        baseline_scores[cls_idx]["baseline_std"] = probs.std(dim=0)
+    
+    return baseline_scores
+
+
+def calculate_adjacency_matrix(dataset_name, experiment_name, use_gat=False, retrained=False):
+    experiment_results = []
+    dataset, model = get_dataset_setup(dataset_name, use_gat=use_gat, retrained=retrained)
+    dataset_list_pred = dataset.split_by_pred(model)
+    
+    for _ in tqdm(range(10)):
+        adj_ratio_mat, _ = gnnboundary.pairwise_boundary_analysis(model, dataset_list_pred)
+        experiment_results.append(adj_ratio_mat)
+
+    result = np.array(experiment_results).mean(axis=0)
+    gnnboundary.draw_matrix(
+        result, 
+        names=dataset.GRAPH_CLS.values(),
+        fmt='.2f',
+        file_name=f"{experiment_name}_adjacency.jpg",
+        save_path="figures",
+        show_plot=False)
