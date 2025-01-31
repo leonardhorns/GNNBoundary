@@ -258,8 +258,8 @@ def baseline(cls_pairs, dataset_name, num_samples=500, use_gat=False, retrained=
 
         model.eval()
         probs = model.forward(dataset.convert(samples))['probs'][:, list(cls_idx)]
-        baseline_scores[cls_idx]["baseline_mean"] = probs.mean(dim=0)
-        baseline_scores[cls_idx]["baseline_std"] = probs.std(dim=0)
+        baseline_scores[cls_idx]["baseline_mean"] = probs.mean(dim=0).tolist()
+        baseline_scores[cls_idx]["baseline_std"] = probs.std(dim=0).tolist()
     
     return baseline_scores
 

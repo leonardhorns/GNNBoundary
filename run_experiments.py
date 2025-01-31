@@ -54,7 +54,7 @@ experiment_configurations = {
     ),
     "motif_gat": dict(
         dataset_name="motif",
-        class_pairs=[(0,3)],#[(0, 1), (0, 3), (1, 2), (1, 3)],
+        class_pairs=[(0, 1), (0, 3), (1, 2), (1, 3)],
         hparams="gat",
         use_gat=True,
     ),
@@ -63,8 +63,8 @@ experiment_configurations = {
 
 def run_experiment(experiment_name, dataset_name, class_pairs, hparams, num_runs=1000, use_gat=False):
     # Adjacency Matrix
-    # print("Computing adjacency matrix...")
-    # calculate_adjacency_matrix(dataset_name, experiment_name)
+    print("Computing adjacency matrix...")
+    calculate_adjacency_matrix(dataset_name, experiment_name)
     
     os.makedirs("results", exist_ok=True)
     os.makedirs("figures", exist_ok=True)
@@ -100,7 +100,7 @@ def run_experiment(experiment_name, dataset_name, class_pairs, hparams, num_runs
     for cls_idx, complexity in evaluation['boundary_complexity'].items():
         scores[cls_idx]["complexity"] = complexity
     
-    Baseline
+    # Baseline
     print("Running baseline evaluation...")
     baseline_scores = baseline(class_pairs, dataset_name, num_samples=500)
     for cls_idx, s in baseline_scores.items():
