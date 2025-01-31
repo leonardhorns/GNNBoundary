@@ -33,6 +33,7 @@ class Trainer:
         self.dataset = dataset
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.discriminator.to(self.device)
         self.init()
 
     def init(self):
