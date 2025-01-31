@@ -122,4 +122,4 @@ if __name__ == "__main__":
     if args.experiment not in experiment_configurations:
         raise ValueError(f"Unknown experiment name: {args.experiment}. Choose from {list(experiment_configurations.keys())}")
     
-    run_experiment(args.experiment, **experiment_configurations[args.experiment], num_runs=5)
+    run_experiment(args.experiment, **experiment_configurations[args.experiment], num_runs=1000)
