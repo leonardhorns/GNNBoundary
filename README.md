@@ -8,7 +8,7 @@
 ### Datasets
 * Here's the [link](https://drive.google.com/file/d/1O3IRF9mhL2KCCU1eVlCEdssaf6y-pq2h/view?usp=sharing) for downloading the processed datasets.
 * After downloading the datasets zip, please `unzip` it in the root folder.
-* To run the additional experiments on the REDDIT-BINARY dataset, download this dataset from [here]() and unzip in the root folder like the other datasets.
+* To run the additional experiments on the REDDIT-BINARY dataset, download this dataset from [here](https://drive.google.com/file/d/1AE-2XH8QqMgQLrjtjcP0SZKrnR41Mwcc/view?usp=sharing) and unzip in the root folder like the other datasets.
 
 ### Environment
 Codes in this repo have been tested on `python3.10` + `pytorch2.1` + `pyg2.5`.
