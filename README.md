@@ -18,7 +18,6 @@ To reproduce the exact python environment, please run:
 conda create -n gnnboundary poetry jupyter
 conda activate gnnboundary
 poetry install
-ipython kernel install --user --name=gnnboundary --display-name="GNNBoundary"
 ```
 
 ### Reproducing Results
