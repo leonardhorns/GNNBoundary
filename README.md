@@ -21,11 +21,6 @@ poetry install
 ipython kernel install --user --name=gnnboundary --display-name="GNNBoundary"
 ```
 
-Note: In case poetry fails to install the dependencies, you can manually install them using `pip`:
-```bash
-pip install -r requirements.txt
-```
-
 ### Reproducing Results
 Once the environment is installed and the datasets are set up, our experiments can be easily reproduced by running the `run_experiments.py` script.
 
